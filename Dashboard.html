@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Order Dashboard</title>
+    <style>
+        body { font-family: Segoe UI, Arial, sans-serif; background: #f6f6f6; }
+        .dashboard { display: flex; flex-wrap: wrap; gap: 20px; padding: 40px; }
+        .card {
+            background: #13896A;
+            color: white;
+            border-radius: 14px;
+            width: 340px;
+            min-height: 160px;
+            padding: 18px 22px 16px 22px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            position: relative;
+        }
+        .customer { font-size: 1.15rem; font-weight: bold; }
+        .dispatch { font-size: 1rem; margin-bottom: 12px; }
+        .item-list { margin-top: 10px; font-size: 0.96rem; }
+        .item-row { margin-bottom: 3px; }
+        .complete-btn {
+            background: #2196f3;
+            color: white;
+            padding: 6px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            position: absolute;
+            top: 16px; right: 16px;
+        }
+        .complete-btn:hover { background: #1769aa; }
+    </style>
+</head>
+<body>
+    <h2 style="text-align:center;margin-top:30px;">Order Dashboard</h2>
+    <div class="dashboard" id="dashboard"></div>
+
+<script>
+    // ====== CONFIG ======
+    const siteUrl = "https://mobilityrentals.sharepoint.com/sites/MobilityRentals-WarehouseOrdersChannel";
+    const ordersList = "Orders";
+    const itemsList = "OrderItems";
+
+    // ====== 1. Get Pending Orders (sorted by soonest DispatchDate) ======
+    async function fetchOrders() {
+        let url = `${siteUrl}/_api/web/lists/getbytitle('${ordersList}')/items?$filter=Status eq 'Pending'&$orderby=DispatchDate asc`;
+        let res = await fetch(url, { headers: { Accept: "application/json;odata=verbose" }, credentials: "include" });
+        let data = await res.json();
+        return data.d.results;
+    }
+
+    // ====== 2. Get Items for All Orders (so we can filter by OrderID.Id) ======
+    async function fetchOrderItems() {
+        // Expand the OrderID lookup so we can access OrderID/Id directly
+        let url = `${siteUrl}/_api/web/lists/getbytitle('${itemsList}')/items?$select=ID,OrderID/Id,ItemCode,ItemName,Quantity&$expand=OrderID`;
+        let res = await fetch(url, { headers: { Accept: "application/json;odata=verbose" }, credentials: "include" });
+        let data = await res.json();
+        return data.d.results;
+    }
+
+    // ====== 3. Mark Order as Complete ======
+    async function completeOrder(orderId) {
+        let url = `${siteUrl}/_api/web/lists/getbytitle('${ordersList}')/items(${orderId})`;
+        await fetch(url, {
+            method: "POST",
+            headers: {
+                "Accept": "application/json;odata=verbose",
+                "Content-Type": "application/json;odata=verbose",
+                "IF-MATCH": "*",
+                "X-HTTP-Method": "MERGE"
+            },
+            body: JSON.stringify({ Status: "Complete" }),
+            credentials: "include"
+        });
+    }
+
+    // ====== 4. Render Dashboard ======
+    async function renderDashboard() {
+        let dashboard = document.getElementById("dashboard");
+        dashboard.innerHTML = "Loading...";
+        let orders = await fetchOrders();
+        let allItems = await fetchOrderItems();
+
+        // Build cards
+        dashboard.innerHTML = "";
+        for (let order of orders) {
+            let card = document.createElement("div");
+            card.className = "card";
+            card.innerHTML = `
+                <div class="customer">${order.CustomerName || "No Name"}</div>
+                <div class="dispatch"><strong>Dispatch:</strong> ${order.DispatchDate || "-"}</div>
+                <div class="item-list" id="items-${order.ID}"><em>Loading items...</em></div>
+                <button class="complete-btn" onclick="completeOrderClick(${order.ID})">Complete</button>
+            `;
+            dashboard.appendChild(card);
+
+            // Find and render items for this order
+            let orderItems = allItems.filter(i => i.OrderID && i.OrderID.Id === order.ID);
+            let itemsDiv = document.getElementById(`items-${order.ID}`);
+            if (orderItems.length === 0) {
+                itemsDiv.innerHTML = "<em>No items</em>";
+            } else {
+                itemsDiv.innerHTML = orderItems.map(i => `
+                    <div class="item-row">
+                        <strong>${i.ItemCode}</strong> - ${i.ItemName} <span style="float:right">Qty: ${i.Quantity}</span>
+                    </div>
+                `).join("");
+            }
+        }
+    }
+
+    // ====== 5. Handle "Complete" Button ======
+    window.completeOrderClick = async function(orderId) {
+        if (confirm("Mark this order as complete?")) {
+            await completeOrder(orderId);
+            renderDashboard();
+        }
+    }
+
+    // ====== 6. Initial Render ======
+    renderDashboard();
+</script>
+</body>
+</html>
